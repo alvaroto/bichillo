@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Dibujo para el bichillo</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:#FFF6F7; --ink:#3B0A15; --muted:#8C5662; --red:#C40F2F; --red-ink:#FFFFFF; --line:#F0CDD4; --surface:#FFFFFF;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#1C0610; --ink:#FBEAEE; --muted:#C9909C; --red:#FF4766; --red-ink:#1C0610; --line:#4A1626; --surface:#2A0B18; }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:1rem/1.5 var(--sans);
+  padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);overscroll-behavior:none}
+main{max-width:34rem;margin:0 auto;padding:1rem 1rem 6rem}
+h1{font:400 1.6rem/1.15 var(--serif);margin:.25rem 0 .25rem}
+p.hint{color:var(--muted);margin:0 0 1rem;font-size:.9375rem}
+.screen{background:#000;border-radius:16px;padding:10px;box-shadow:0 0 0 1px var(--line)}
+canvas{display:block;width:100%;height:auto;image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none;cursor:crosshair;border-radius:4px}
+.tools{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0 0}
+.tools button{flex:1 1 auto;min-height:46px;padding:.5rem .9rem;border-radius:12px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);font:500 .9375rem var(--sans);cursor:pointer}
+.tools button[aria-pressed="true"]{background:var(--red);border-color:var(--red);color:var(--red-ink)}
+.tools button:focus-visible,.send:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.send{display:block;width:100%;margin:1.25rem 0 0;min-height:52px;border:0;border-radius:14px;background:var(--red);
+  color:var(--red-ink);font:600 1.0625rem var(--sans);cursor:pointer}
+.status{min-height:1.5rem;margin:.75rem 0 0;color:var(--muted)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>Un dibujo para ella</h1>
+  <p class="hint">Dibuja con el dedo. Lo que ves aquí es exactamente lo que saldrá en su pantalla.</p>
+
+  <div class="screen"><canvas id="c" width="128" height="64" aria-label="Lienzo de 128 por 64 píxeles"></canvas></div>
+
+  <div class="tools" role="toolbar" aria-label="Herramientas">
+    <button type="button" data-tool="fino" aria-pressed="true">Fino</button>
+    <button type="button" data-tool="gordo" aria-pressed="false">Gordo</button>
+    <button type="button" data-tool="goma" aria-pressed="false">Goma</button>
+    <button type="button" id="undo">Deshacer</button>
+    <button type="button" id="clear">Borrar todo</button>
+  </div>
+
+  <button class="send" id="send" type="button" hidden>Enviar al bichillo</button>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+</main>
+<script>
+const W = 128, H = 64;
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+let px = new Uint8Array(W * H);             // 1 = píxel encendido
+let tool = 'fino', drawing = false, last = null, history = [];
+const tg = window.Telegram && Telegram.WebApp;
+
+function render() {
+  const img = cx.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const v = px[i] ? 245 : 0, o = i * 4;
+    img.data[o] = v; img.data[o + 1] = px[i] ? 250 : 0; img.data[o + 2] = px[i] ? 255 : 0; img.data[o + 3] = 255;
+  }
+  cx.putImageData(img, 0, 0);
+}
+
+function plot(x, y) {
+  const r = tool === 'fino' ? 0 : tool === 'gordo' ? 1 : 2, on = tool === 'goma' ? 0 : 1;
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (r > 1 && dx * dx + dy * dy > r * r + 1) continue;
+    const X = x + dx, Y = y + dy;
+    if (X >= 0 && X < W && Y >= 0 && Y < H) px[Y * W + X] = on;
+  }
+}
+
+function line(a, b) {        // Bresenham: trazo continuo aunque el dedo vaya rápido
+  let x0 = a.x, y0 = a.y; const x1 = b.x, y1 = b.y;
+  const dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1, dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    plot(x0, y0);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+function pos(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: Math.floor((e.clientX - r.left) / r.width * W), y: Math.floor((e.clientY - r.top) / r.height * H) };
+}
+
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault(); cv.setPointerCapture(e.pointerId);
+  history.push(px.slice()); if (history.length > 30) history.shift();
+  drawing = true; last = pos(e); line(last, last); render(); changed();
+});
+cv.addEventListener('pointermove', e => {
+  if (!drawing) return;
+  const p = pos(e); line(last, p); last = p; render();
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(t => cv.addEventListener(t, () => { drawing = false; }));
+
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
+  tool = b.dataset.tool;
+  document.querySelectorAll('[data-tool]').forEach(x => x.setAttribute('aria-pressed', x === b));
+});
+document.getElementById('undo').onclick = () => { if (history.length) { px = history.pop(); render(); changed(); } };
+document.getElementById('clear').onclick = () => { history.push(px.slice()); px = new Uint8Array(W * H); render(); changed(); };
+
+// 1024 bytes en formato XBM (bit 0 = píxel de la izquierda), en base64
+function pack() {
+  const out = new Uint8Array(1024);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (px[y * W + x]) out[y * 16 + (x >> 3)] |= 1 << (x & 7);
+  let s = ''; out.forEach(b => s += String.fromCharCode(b));
+  return btoa(s);
+}
+
+function send() {
+  if (!px.some(v => v)) { document.getElementById('status').textContent = 'Dibuja algo primero.'; return; }
+  if (tg && tg.initData) { tg.sendData(pack()); }   // Telegram cierra esta ventana y se lo manda al bichillo
+  else document.getElementById('status').textContent = 'Ábrelo desde el botón «Dibujar» del bot de Telegram para poder enviarlo.';
+}
+
+function changed() { if (tg && tg.MainButton) { px.some(v => v) ? tg.MainButton.enable() : tg.MainButton.disable(); } }
+
+if (tg && tg.initData) {
+  tg.ready(); tg.expand();
+  if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();   // que dibujar hacia abajo no cierre la ventana
+  tg.MainButton.setText('Enviar al bichillo');
+  tg.MainButton.onClick(send);
+  tg.MainButton.show(); tg.MainButton.disable();
+} else {
+  document.getElementById('send').hidden = false;
+  document.getElementById('send').onclick = send;
+}
+render();
+</script>
+</body>
+</html>

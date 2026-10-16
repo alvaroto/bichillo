@@ -15,10 +15,10 @@
   :root{ --bg:#1C0610; --ink:#FBEAEE; --muted:#C9909C; --red:#FF4766; --red-ink:#1C0610; --line:#4A1626; --surface:#2A0B18; }
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%}
+html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none}
 body{background:var(--bg);color:var(--ink);font:1rem/1.5 var(--sans);
   padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);overscroll-behavior:none}
-main{max-width:34rem;margin:0 auto;padding:1rem 1rem 6rem}
+main{max-width:34rem;margin:0 auto;padding:1rem 1rem 6rem;height:100%;overflow-y:auto}
 h1{font:400 1.6rem/1.15 var(--serif);margin:.25rem 0 .25rem}
 p.hint{color:var(--muted);margin:0 0 1rem;font-size:.9375rem}
 .screen{background:#000;border-radius:16px;padding:10px;box-shadow:0 0 0 1px var(--line)}
@@ -58,6 +58,9 @@ const cv = document.getElementById('c'), cx = cv.getContext('2d');
 let px = new Uint8Array(W * H);             // 1 = píxel encendido
 let tool = 'fino', drawing = false, last = null, history = [];
 const tg = window.Telegram && Telegram.WebApp;
+// Abierto desde el botón del bot: Telegram no siempre manda initData en ese caso,
+// así que se mira la plataforma ("unknown" = navegador normal)
+const inTelegram = !!(tg && (tg.initData || (tg.platform && tg.platform !== 'unknown')));
 
 function render() {
   const img = cx.createImageData(W, H);
@@ -123,14 +126,18 @@ function pack() {
 
 function send() {
   if (!px.some(v => v)) { document.getElementById('status').textContent = 'Dibuja algo primero.'; return; }
-  if (tg && tg.initData) { tg.sendData(pack()); }   // Telegram cierra esta ventana y se lo manda al bichillo
+  if (inTelegram) { tg.sendData(pack()); }   // Telegram cierra esta ventana y se lo manda al bichillo
   else document.getElementById('status').textContent = 'Ábrelo desde el botón «Dibujar» del bot de Telegram para poder enviarlo.';
 }
 
 function changed() { if (tg && tg.MainButton) { px.some(v => v) ? tg.MainButton.enable() : tg.MainButton.disable(); } }
 
-if (tg && tg.initData) {
+// mientras se dibuja, que no se mueva nada
+document.addEventListener('touchmove', e => { if (drawing) e.preventDefault(); }, { passive: false });
+
+if (inTelegram) {
   tg.ready(); tg.expand();
+  setTimeout(() => tg.expand(), 300);
   if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();   // que dibujar hacia abajo no cierre la ventana
   tg.MainButton.setText('Enviar al bichillo');
   tg.MainButton.onClick(send);
